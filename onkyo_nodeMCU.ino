@@ -281,7 +281,8 @@ void setupAP(void) {
   }
   Serial.println("");
   st = "<ol>";
-  selectSSID = "<select id='ssid' name='ssid'>";
+  //selectSSID = "<select id='ssid' name='ssid'>";
+  selectSSID = "<input type='text' id='ssid' name='ssid' list='ssidList'/><datalist id='ssidList'>";
   for (int i = 0; i < n; ++i) {
     // Print SSID and RSSI for each network found
     st += "<li>";
@@ -299,7 +300,8 @@ void setupAP(void) {
     st += "</li>";
   }
   st += "</ol>";
-  selectSSID += "</select>";
+  //selectSSID += "</select>";
+  selectSSID += "</datalist>";
   delay(100);
   WiFi.softAP("onkyo_nodeMCU", "");
   Serial.println("softap");
