@@ -1,17 +1,17 @@
 #include "Arduino.h"
+#include <map>
+#include "config.h"
 #include <EEPROM.h>
-#include <ESP8266WiFi.h>
 #include <WiFiClient.h>
+#include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
-//#include <DoubleResetDetector.h>
+#include <ESP8266SSDP.h>
+#include <uri/UriBraces.h>
+#include <DoubleResetDetector.h>
 
-// Number of seconds after reset during which a
-// subseqent reset will be considered a double reset.
-//#define DRD_TIMEOUT 5
-
-// RTC Memory Address for the DoubleResetDetector to use
-//#define DRD_ADDRESS 0
+#define DRD_TIMEOUT 1
+#define DRD_ADDRESS 0
 
 // ONKYO
 #define ONKYO_PIN 2  //13
@@ -25,55 +25,74 @@ String content;
 
 //Function Decalration
 bool testWifi(void);
-void launchWeb(void);
+void launchAPWeb(void);
 void setupAP(void);
 
-//DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
+// Clear EEPROM
+void clearEEPROM() {
+  for (int i = 0; i < 96; i++) {
+    EEPROM.write(i, 0);
+  }
+  EEPROM.commit();
+  delay(100);
+  ESP.reset();
+}
 
+DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 ESP8266WebServer server(80);
 
 void setup() {
-  /*if (drd.detectDoubleReset()) {
-    clearEEPROM();
-  }*/
-  //drd.loop();
-  pinMode(ONKYO_PIN, OUTPUT);
-  Serial.begin(115200);  //Initialising if(DEBUG)Serial Monitor
-  Serial.println();
-
-  Serial.println("Disconnecting previously connected WiFi");
-  WiFi.disconnect();
   EEPROM.begin(512);  //Initialasing EEPROM
   delay(10);
+
+#ifdef DEBUG_ON
+  Serial.begin(115200);  // Start serial debug console monitoring
+  while (!Serial)
+    ;
+#endif
+
+  if (drd.detectDoubleReset()) {
+    DEBUG("Drd detected");
+    //clearEEPROM();
+    //return;
+  }
+  drd.loop();
+
+  DEBUG();
+  DEBUG("Disconnecting previously connected WiFi");
+  WiFi.disconnect();
+
+  pinMode(ONKYO_PIN, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
-  Serial.println();
-  Serial.println();
-  Serial.println("Startup");
+  //digitalWrite(LED_BUILTIN, HIGH);//this will turn off the NodeMCU blue LED
+  DEBUG();
+  DEBUG();
+  DEBUG("Startup");
 
   //-- Read EEPROM for SSID and pass
-  Serial.println("Reading EEPROM ssid");
+  DEBUG("Reading EEPROM ssid");
   String esid;
   for (int i = 0; i < 32; ++i) {
     esid += char(EEPROM.read(i));
   }
-  Serial.println();
-  Serial.print("SSID: ");
-  Serial.println(esid);
-  Serial.println("Reading EEPROM pass");
+  DEBUG();
+  DEB("SSID: ");
+  DEBUG(esid);
+  DEBUG("Reading EEPROM pass");
 
   String epass = "";
   for (int i = 32; i < 96; ++i) {
     epass += char(EEPROM.read(i));
   }
-  Serial.print("PASS: ");
-  Serial.println(epass);
+  DEB("PASS: ");
+  DEBUG(epass);
 
   WiFi.begin(esid.c_str(), epass.c_str());
 
   if (testWifi()) {
-    Serial.println("Succesfully Connected!!!");
-    if (MDNS.begin("onkyo_nodeMCU")) {
-      Serial.println("MDNS responder started");
+    DEBUG("Succesfully Connected!!!");
+    if (MDNS.begin("Onkyo NodeMCU")) {
+      DEBUG("MDNS responder started");
     }
     // Set server routing
     restServerRouting();
@@ -81,16 +100,24 @@ void setup() {
     server.onNotFound(handleNotFound);
     // Start server
     server.begin();
-    Serial.println("HTTP server started");
+    MDNS.addService("http", "tcp", 80);
+    DEBUG("Starting SSDP...");
+    SSDP.setSchemaURL("description.xml");
+    SSDP.setHTTPPort(80);
+    SSDP.setName("Onkyo NodeMCU");
+    SSDP.setURL("index.html");
+    SSDP.setModelName("D1 Mini NodeMCU");
+    SSDP.begin();
+    DEBUG("HTTP server started");
     return;
   } else {
-    Serial.println("Turning the HotSpot On");
-    launchWeb();
+    DEBUG("Turning the HotSpot On");
+    launchAPWeb();
     setupAP();  // Setup HotSpot
   }
 
-  Serial.println();
-  Serial.print("Waiting.");
+  DEBUG();
+  DEB("Waiting.");
 
   while ((WiFi.status() != WL_CONNECTED)) {
     server.handleClient();
@@ -101,119 +128,110 @@ void setup() {
 //-- Fuctions used for WiFi credentials saving and connecting to it which you do not need to change
 bool testWifi(void) {
   uint i = 0;
-  Serial.println("Waiting for Wifi to connect");
+  DEBUG("Waiting for Wifi to connect");
   while (i < 20) {
     if (WiFi.status() == WL_CONNECTED) {
       return true;
     }
     delay(500);
-    Serial.print("*");
+    DEB("*");
     i++;
   }
-  Serial.println();
-  Serial.println("Connect timed out, opening AP");
+  DEBUG();
+  DEBUG("Connect timed out");
   return false;
 }
 
-void launchWeb() {
-  Serial.println();
+void launchAPWeb() {
+  DEBUG();
   if (WiFi.status() == WL_CONNECTED)
-    Serial.println("WiFi connected");
-  Serial.print("Local IP: ");
-  Serial.println(WiFi.localIP());
-  Serial.print("SoftAP IP: ");
-  Serial.println(WiFi.softAPIP());
-  createWebServer();
-  // Start the server
-  server.begin();
-  Serial.println("Server started");
-}
-
-
-void onkyoSendOn() {
-  server.send(200, "application/json", "{\"route\": \"on\",\"cmd\": \"0x02F\"}");
-  onkyoSend(0x02F);
-}
-
-void onkyoSendOff() {
-  server.send(200, "application/json", "{\"route\": \"off\",\"cmd\": \"0x0DA\"}");
-  onkyoSend(0x0DA);
-}
-
-void onkyoSendMute() {
-  server.send(200, "application/json", "{\"route\": \"mute\",\"cmd\": \"0x005\"}");
-  onkyoSend(0x005);
-}
-
-void onkyoSendVolUp() {
-  server.send(200, "application/json", "{\"route\": \"volup\",\"cmd\": \"0x002\"}");
-  onkyoSend(0x002);
-}
-
-void onkyoSendVolDown() {
-  server.send(200, "application/json", "{\"route\": \"voldown\",\"cmd\": \"0x003\"}");
-  onkyoSend(0x003);
-}
-
-void onkyoSendSource() {
-  server.send(200, "application/json", "{\"route\": \"source\",\"cmd\": \"0x0D5\"}");
-  onkyoSend(0x0D5);
-}
-
-// Serving Command List
-void getRoutesList() {
-  server.send(200, "application/json", "[{\"route\": \"on\",\"cmd\": \"0x02F\"}, {\"route\": \"off\",\"cmd\": \"0x0DA\"}, {\"route\": \"mute\",\"cmd\": \"0x005\"}, {\"route\": \"volup\",\"cmd\": \"0x002\"}, {\"route\": \"voldown\",\"cmd\": \"0x003\"}, {\"route\": \"source\",\"cmd\": \"0x0D5\"},{\"route\": \"initialize\",\"cmd\": \"Reset WiFi settings\"},{\"route\": \"custom\",\"URI parameters\": [{\"cmd\": []}]}]");
-}
-
-// Clear EEPROM
-void clearEEPROM() {
-  for (int i = 0; i < 96; i++) {
-    EEPROM.write(i, 0);
+    DEBUG("WiFi connected");
+  DEB("Local IP: ");
+  DEBUG(WiFi.localIP());
+  DEB("SoftAP IP: ");
+  DEBUG(WiFi.softAPIP());
+  createAPWebServer();
+  if (MDNS.begin("Onkyo NodeMCU")) {
+    DEBUG("MDNS responder started");
   }
-  delay(500);
-  EEPROM.commit();
-  server.send(200, "application/json", "{\"route\": \"initialize\",\"cmd\": \"EEPROM ssid & pass data cleared!\"}");
-  Serial.println("EEPROM ssid & pass data cleared!");
-  ESP.reset();
+  server.begin();
+  MDNS.addService("http", "tcp", 80);
+  DEBUG("Starting SSDP");
+  SSDP.setSchemaURL("description.xml");
+  SSDP.setHTTPPort(80);
+  SSDP.setName("Onkyo NodeMCU");
+  SSDP.setURL("index.html");
+  SSDP.setModelName("D1 Mini NodeMCU");
+  SSDP.begin();
+  DEBUG("HTTP server started");
 }
 
 // Define routing
 void restServerRouting() {
-  server.on("/", HTTP_GET, getRoutesList);
-  server.on("/on", HTTP_GET, onkyoSendOn);
-  server.on("/off", HTTP_GET, onkyoSendOff);
-  server.on("/mute", HTTP_GET, onkyoSendMute);
-  server.on("/volup", HTTP_GET, onkyoSendVolUp);
-  server.on("/voldown", HTTP_GET, onkyoSendVolDown);
-  server.on("/source", HTTP_GET, onkyoSendSource);
-  server.on("/initialize", HTTP_GET, clearEEPROM);
 
-  server.on("/custom", []() {
-    String cmd = server.arg("cmd");
+  // server.on("/description.xml", HTTP_GET, []() {
+  //   SSDP.schema(server.client());
+  // });
 
-    if (cmd.length() == 0) {
-      content = "{\"Error\":\"422 required parameter not found\"}";
-      statusCode = 422;
-    } else {
-      int cmd_len = cmd.length() + 1;
-      char cmd_array[cmd_len];
-      cmd.toCharArray(cmd_array, cmd_len);
-      int cmd_int = (int)strtol(cmd_array, 0, 16);
+  // for (const auto &x : cmds) {
+  //   DEBUG(x.first + ": " + x.second);
+  //   // server.on("/" + x.first, HTTP_GET, []() {
+  //   //   //content = "{\"route\": \"" + &x.first + "\",\"cmd\": \"" + String(&x.second) + "\"}";
+  //   //   content = "ok";
+  //   //   statusCode = 200;
+  //   //   //onkyoSend(x.first);
+  //   //   server.send(statusCode, "application/json", content);
+  //   // });
+  // }
 
-      if (cmd_int != 0) {
-        //Serial.println(cmd_array);
-        //Serial.println(cmd_int);
-        onkyoSend(cmd_int);
-
-        content = "{\"route\": \"custom\",\"cmd\": \"" + cmd + "\"}";
-        statusCode = 200;
+  server.on(UriBraces("/{}"), HTTP_GET, []() {
+    DEB("route: " + server.pathArg(0));
+    String cmd = (server.pathArg(0));
+    cmd.toLowerCase();
+    DEBUG(" - lower: " + cmd);
+    if (cmds.count(cmd)) {
+      content = "{\"route\": \"" + cmd + "\",\"cmd\": \"" + String(cmds[cmd]) + "\"}";
+      statusCode = 200;
+      onkyoSend(cmds[cmd]);
+      server.send(statusCode, "application/json", content);
+    } else if (cmd == "") {
+      content = "[{\"route\": \"on\",\"cmd\": \"0x02F\"}, {\"route\": \"off\",\"cmd\": \"0x0DA\"}, {\"route\": \"mute\",\"cmd\": \"0x005\"}, {\"route\": \"volup\",\"cmd\": \"0x002\"}, {\"route\": \"voldown\",\"cmd\": \"0x003\"}, {\"route\": \"sourcenext\",\"cmd\": \"0x0D5\"}, {\"route\": \"sourceprev\",\"cmd\": \"0x0D6\"}, {\"route\": \"initialize\",\"cmd\": \"Reset WiFi settings\"},{\"route\": \"custom\",\"URI parameters\": [{\"cmd\": []}]}]";
+      statusCode = 200;
+      server.send(statusCode, "application/json", content);
+    } else if (cmd == "initialize") {
+      server.send(200, "application/json", "{\"route\": \"initialize\",\"cmd\": \"EEPROM ssid & pass data cleared!\"}");
+      DEBUG("EEPROM ssid & pass data cleared!");
+      clearEEPROM();
+    } else if (cmd == "custom") {
+      String custom_cmd = server.arg("cmd");
+      if (custom_cmd.length() == 0) {
+        content = "{\"Error\":\"422 required parameter not found\"}";
+        statusCode = 422;
       } else {
-        content = "{\"Error\":\"400 Bad request\"}";
-        statusCode = 400;
+        int cmd_len = custom_cmd.length() + 1;
+        char cmd_array[cmd_len];
+        custom_cmd.toCharArray(cmd_array, cmd_len);
+        int cmd_int = (int)strtol(cmd_array, 0, 16);
+
+        if (cmd_int != 0) {
+          DEBUG(cmd_array);
+          DEBUG(cmd_int);
+          onkyoSend(cmd_int);
+
+          content = "{\"route\": \"custom\",\"cmd\": \"" + custom_cmd + "\"}";
+          statusCode = 200;
+        } else {
+          content = "{\"Error\":\"400 Bad request\"}";
+          statusCode = 400;
+        }
       }
+      //server.sendHeader("Access-Control-Allow-Origin", "*");
+      server.send(statusCode, "application/json", content);
+    } else if (cmd == "description.xml") {
+      SSDP.schema(server.client());
+    } else {
+      handleNotFound;
     }
-    //server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(statusCode, "application/json", content);
   });
 }
 
@@ -238,25 +256,25 @@ void setupAP(void) {
   WiFi.disconnect();
   delay(100);
   int n = WiFi.scanNetworks();
-  Serial.println("scan done");
+  DEBUG("scan done");
   if (n == 0)
-    Serial.println("no networks found");
+    DEBUG("no networks found");
   else {
-    Serial.print(n);
-    Serial.println(" networks found");
+    DEB(n);
+    DEBUG(" networks found");
     for (int i = 0; i < n; ++i) {
       // Print SSID and RSSI for each network found
-      Serial.print(i + 1);
-      Serial.print(": ");
-      Serial.print(WiFi.SSID(i));
-      Serial.print(" (");
-      Serial.print(WiFi.RSSI(i));
-      Serial.print(")");
-      Serial.println((WiFi.encryptionType(i) == ENC_TYPE_NONE) ? " " : "*");
+      DEB(i + 1);
+      DEB(": ");
+      DEB(WiFi.SSID(i));
+      DEB(" (");
+      DEB(WiFi.RSSI(i));
+      DEB(")");
+      DEBUG((WiFi.encryptionType(i) == ENC_TYPE_NONE) ? " " : "*");
       delay(10);
     }
   }
-  Serial.println();
+  DEBUG();
   st = "<ol>";
   selectSSID = "<input type='text' id='ssid' name='ssid' list='ssidList'/><datalist id='ssidList'>";
   for (int i = 0; i < n; ++i) {
@@ -270,7 +288,6 @@ void setupAP(void) {
     selectSSID += "</option>";
     st += " (";
     st += WiFi.RSSI(i);
-
     st += ")";
     st += (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? " " : "*";
     st += "</li>";
@@ -278,32 +295,43 @@ void setupAP(void) {
   st += "</ol>";
   selectSSID += "</datalist>";
   delay(100);
-  WiFi.softAP("onkyo_nodeMCU", "");
-  Serial.println("softap");
-  launchWeb();
-  Serial.println("over");
+  WiFi.softAP("Onkyo NodeMCU");
+  DEBUG("softap");
+  launchAPWeb();
+  DEBUG("over");
 }
 
-void createWebServer() {
+void createAPWebServer() {
+  server.on("/description.xml", HTTP_GET, []() {
+    SSDP.schema(server.client());
+  });
   server.on("/", []() {
     IPAddress ip = WiFi.softAPIP();
-    String ipStr = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
-    content = "<!DOCTYPE HTML>\r\n<html>Onkyo_nodeMCU";
-    content += "<form action=\"/scan\" method=\"POST\"><input type=\"submit\" value=\"scan\"></form>";
-    content += ipStr;
+    String ipStr = ip.toString().c_str();  //String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+    content = "<!DOCTYPE HTML><html>";
+    content += "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+    content += "<link rel=\"icon\" href=\"data:,\">";
+    content += "<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}";
+    content += ".button { background-color: #253342; border: none; color: white; padding: 16px 40px;";
+    content += "text-decoration: none; font-size: 20px; margin: 2px; cursor: pointer;}";
+    content += ".button2 {background-color: #555555;}</style></head>";
+    content += "<body><h1>Onkyo NodeMCU</h1>";
+    content += "<form action=\"/scan\" method=\"POST\"><input type=\"submit\" value=\"scan\" class=\"button\"></form>";
+   // content += ipStr;
     content += "<p>";
     content += st;
-    content += "</p><form method='get' action='setting'><label>SSID: </label><br>";
+    content += "</p><form method='get' action='setting'><label>SSID: </label>";
     content += selectSSID;
-    content += "<label>Password: </label><input name='pass' length=64><br><input type='submit'></form>";
-    content += "</html>";
+    content += "<br><label>Password: </label><input name='pass' length=64><br><input type=\"submit\" class=\"button\"></form>";
+    content += "</body></html>";
     server.send(200, "text/html", content);
   });
+
   server.on("/scan", []() {
     IPAddress ip = WiFi.softAPIP();
-    String ipStr = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+    String ipStr = ip.toString().c_str();  //String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
 
-    content = "<!DOCTYPE HTML>\r\n<html><button onclick='window.location=\"192.168.1.4\";'>Back</button></html>";
+    content = "<!DOCTYPE HTML>\r\n<html><button onclick='window.location.href=\"/\";'>Back</button></html>";
     server.send(200, "text/html", content);
   });
 
@@ -311,39 +339,45 @@ void createWebServer() {
     String qsid = server.arg("ssid");
     String qpass = server.arg("pass");
     if (qsid.length() > 0 && qpass.length() > 0) {
-      Serial.println("clearing eeprom");
+      DEBUG("clearing eeprom");
       for (int i = 0; i < 96; ++i) {
         EEPROM.write(i, 0);
       }
-      Serial.println(qsid);
-      Serial.println();
-      Serial.println(qpass);
-      Serial.println();
+      DEBUG(qsid);
+      DEBUG();
+      DEBUG(qpass);
+      DEBUG();
 
-      Serial.println("writing eeprom ssid:");
+      DEB("writing eeprom ssid: ");
       for (int i = 0; i < qsid.length(); ++i) {
         EEPROM.write(i, qsid[i]);
-        Serial.print("Wrote: ");
-        Serial.println(qsid[i]);
+        DEB(qsid[i]);
       }
-      Serial.println("writing eeprom pass:");
+      DEBUG();
+      DEB("writing eeprom pass: ");
       for (int i = 0; i < qpass.length(); ++i) {
         EEPROM.write(32 + i, qpass[i]);
-        Serial.print("Wrote: ");
-        Serial.println(qpass[i]);
+        DEB(qpass[i]);
       }
+      DEBUG();
       EEPROM.commit();
 
-      content = "{\"Success\":\"saved to eeprom... reset to boot into new wifi\"}";
+      content = "{\"Success\":\"saved to eeprom... The device will now reset to boot into new wifi\"}";
       statusCode = 200;
-      ESP.reset();
+
     } else {
       content = "{\"Error\":\"404 not found\"}";
       statusCode = 404;
-      Serial.println("Sending 404");
+      DEBUG("Sending 404");
     }
+
     server.sendHeader("Access-Control-Allow-Origin", "*");
     server.send(statusCode, "application/json", content);
+
+    if (statusCode == 200) {
+      delay(100);
+      ESP.reset();
+    }
   });
 }
 
@@ -361,12 +395,12 @@ void onkyoSend(int command) {
 }
 
 void onkyoWriteHeader() {
-  //Serial.println(micros());
+  //DEBUG(micros());
   digitalWrite(ONKYO_PIN, HIGH);
   delayMicroseconds(3000);
   digitalWrite(ONKYO_PIN, LOW);
   delayMicroseconds(1000);
-  //Serial.println(micros());
+  //DEBUG(micros());
 }
 void onkyoWriteBit(bool level) {
   digitalWrite(ONKYO_PIN, HIGH);
