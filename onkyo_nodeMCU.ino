@@ -8,13 +8,6 @@
 #include <ESP8266mDNS.h>
 #include <ESP8266SSDP.h>
 #include <uri/UriBraces.h>
-#include <DoubleResetDetector.h>
-
-#define DRD_TIMEOUT 1
-#define DRD_ADDRESS 0
-
-// ONKYO
-#define ONKYO_PIN 2  //13
 
 //Variables
 uint i = 0;
@@ -22,6 +15,7 @@ uint statusCode;
 String st;
 String selectSSID;
 String content;
+char hexadecimalnum[5];
 
 //Function Decalration
 bool testWifi(void);
@@ -38,7 +32,6 @@ void clearEEPROM() {
   ESP.reset();
 }
 
-DoubleResetDetector drd(DRD_TIMEOUT, DRD_ADDRESS);
 ESP8266WebServer server(80);
 
 void setup() {
@@ -50,13 +43,6 @@ void setup() {
   while (!Serial)
     ;
 #endif
-
-  if (drd.detectDoubleReset()) {
-    DEBUG("Drd detected");
-    //clearEEPROM();
-    //return;
-  }
-  drd.loop();
 
   DEBUG();
   DEBUG("Disconnecting previously connected WiFi");
@@ -105,7 +91,7 @@ void setup() {
     SSDP.setSchemaURL("description.xml");
     SSDP.setHTTPPort(80);
     SSDP.setName("Onkyo NodeMCU");
-    SSDP.setURL("index.html");
+    SSDP.setURL("/");
     SSDP.setModelName("D1 Mini NodeMCU");
     SSDP.begin();
     DEBUG("HTTP server started");
@@ -160,7 +146,7 @@ void launchAPWeb() {
   SSDP.setSchemaURL("description.xml");
   SSDP.setHTTPPort(80);
   SSDP.setName("Onkyo NodeMCU");
-  SSDP.setURL("index.html");
+  SSDP.setURL("/");
   SSDP.setModelName("D1 Mini NodeMCU");
   SSDP.begin();
   DEBUG("HTTP server started");
@@ -169,33 +155,24 @@ void launchAPWeb() {
 // Define routing
 void restServerRouting() {
 
-  // server.on("/description.xml", HTTP_GET, []() {
-  //   SSDP.schema(server.client());
-  // });
-
-  // for (const auto &x : cmds) {
-  //   DEBUG(x.first + ": " + x.second);
-  //   // server.on("/" + x.first, HTTP_GET, []() {
-  //   //   //content = "{\"route\": \"" + &x.first + "\",\"cmd\": \"" + String(&x.second) + "\"}";
-  //   //   content = "ok";
-  //   //   statusCode = 200;
-  //   //   //onkyoSend(x.first);
-  //   //   server.send(statusCode, "application/json", content);
-  //   // });
-  // }
-
   server.on(UriBraces("/{}"), HTTP_GET, []() {
     DEB("route: " + server.pathArg(0));
     String cmd = (server.pathArg(0));
     cmd.toLowerCase();
     DEBUG(" - lower: " + cmd);
     if (cmds.count(cmd)) {
-      content = "{\"route\": \"" + cmd + "\",\"cmd\": \"" + String(cmds[cmd]) + "\"}";
+      sprintf(hexadecimalnum, "0x%.3X", cmds[cmd]);
+      content = "{\"route\": \"" + cmd + "\",\"cmd\": \"" + hexadecimalnum + "\"}";
       statusCode = 200;
       onkyoSend(cmds[cmd]);
       server.send(statusCode, "application/json", content);
     } else if (cmd == "") {
-      content = "[{\"route\": \"on\",\"cmd\": \"0x02F\"}, {\"route\": \"off\",\"cmd\": \"0x0DA\"}, {\"route\": \"mute\",\"cmd\": \"0x005\"}, {\"route\": \"volup\",\"cmd\": \"0x002\"}, {\"route\": \"voldown\",\"cmd\": \"0x003\"}, {\"route\": \"sourcenext\",\"cmd\": \"0x0D5\"}, {\"route\": \"sourceprev\",\"cmd\": \"0x0D6\"}, {\"route\": \"initialize\",\"cmd\": \"Reset WiFi settings\"},{\"route\": \"custom\",\"URI parameters\": [{\"cmd\": []}]}]";
+      content = "[";
+      for (auto const& [key, val] : cmds) {
+        sprintf(hexadecimalnum, "0x%.3X", val);
+        content += "{\"route\": \"" + key + "\",\"cmd\": \"" + hexadecimalnum + "\"},";
+      }
+      content += "{\"route\": \"initialize\",\"cmd\": \"Reset WiFi settings\"},{\"route\": \"custom\",\"URI parameters\": [{\"cmd\": []}]}]";
       statusCode = 200;
       server.send(statusCode, "application/json", content);
     } else if (cmd == "initialize") {
@@ -230,14 +207,14 @@ void restServerRouting() {
     } else if (cmd == "description.xml") {
       SSDP.schema(server.client());
     } else {
-      handleNotFound;
+      handleNotFound();
     }
   });
 }
 
 // Manage not found URL
 void handleNotFound() {
-  String message = "File Not Found\n\n";
+  String message = "Not Found\n\n";
   message += "URI: ";
   message += server.uri();
   message += "\nMethod: ";
@@ -317,7 +294,7 @@ void createAPWebServer() {
     content += ".button2 {background-color: #555555;}</style></head>";
     content += "<body><h1>Onkyo NodeMCU</h1>";
     content += "<form action=\"/scan\" method=\"POST\"><input type=\"submit\" value=\"scan\" class=\"button\"></form>";
-   // content += ipStr;
+    // content += ipStr;
     content += "<p>";
     content += st;
     content += "</p><form method='get' action='setting'><label>SSID: </label>";
