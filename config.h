@@ -1,13 +1,12 @@
 #ifndef _CONFIG_H
 #define _CONFIG_H
 
-//#define DEBUG_ON
+//#define DEBUG_ON  //uncomment to enable console debug
 #define ONKYO_PIN 2  //13
 #define ONKYO_A_9010 //ONKYO_TX8020
 
 /*
-*
-*
+* AMPS MODELS COMMAND LISTS
 */
 
 #ifdef ONKYO_A_9010

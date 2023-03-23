@@ -1,9 +1,9 @@
 # Onkyo NodeMCU
 
-Use any NodeMCU ESP82666 board to drive you Onkyo Amplifier via REST commands.
+Use any NodeMCU ESP8266 board to drive your Onkyo Amplifier via REST commands.
 
 ## Description
-This project will help you to create an usb powered little box that will expose some REST API GET commands in you local network to drive your offline amplifier.
+This project will help you to create an usb powered little box that will expose some REST API GET commands to you local network to drive your offline amplifier.
  
 ## Tools needed
 What I'm using:
@@ -16,20 +16,20 @@ What I'm using:
 * [OnkyoRI library](https://github.com/docbender/Onkyo-RI)
 
 ## Usage
-During the first boot, your nodeMCU board will boot in AP mode (SSID: `Onkyo NodeMCU`, no password), connect to it and point your browser at `192.168.4.1`, 
+During the first boot, your nodeMCU board will boot in AP mode (SSID: `Onkyo NodeMCU`, no password), connect to it and navigate with your browser to `http://192.168.4.1`. 
 Here you will be able to select your local wifi SSID and insert your password.
 
 The board will store SSID and password data, then it'll restart and try to connect. If everything is ok, you'll find a new device in your home network. Test it with your browser reaching the IP address it got from your DHCP (ex.: `http://192.168.1.13`)
 
 ## Configuration
-Please, take a look at the config.h file, there you have to select your amplifier model, the GPIO pin used or enable debug.
+Please, take a look at the config.h file, there you have to select your amplifier model, the GPIO pin used or enable/disable debug.
 
 ## REST GET commands
 Those are commands available indipendently by the amplifier model.
  * custom (custom command via `cmd` parameter) (ex.: `http://192.168.1.13/custom?cmd=0x02F`)
  * initialize (reset wireless settings)
 
-While here below there are specific amplifiers commands already stored in the config.h file, you need to define your model before compiling and flashing your NodeMCU board.
+Here below there are specific amplifiers commands already stored in the config.h file, you need to define your model before compiling and flashing your NodeMCU board.
 
  ### Onkyo A-9010 RI Codes
 | Action | Command | REST GET |
