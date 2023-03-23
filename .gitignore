@@ -1,2 +1,3 @@
 build/*
 arduino.json
+.vscode/*
