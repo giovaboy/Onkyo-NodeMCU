@@ -72,7 +72,7 @@ void setup() {
   }
   DEB("PASS: ");
   DEBUG(epass);
-
+  WiFi.hostname("Onkyo-NodeMCU");
   WiFi.begin(esid.c_str(), epass.c_str());
 
   if (testWifi()) {
